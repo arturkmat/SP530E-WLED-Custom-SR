@@ -28,7 +28,7 @@ jobs:
 
       - name: Fetch WLED v0.15.0
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           rm -rf /tmp/WLEDtemp || true
           mkdir -p /tmp/WLEDtemp
           wget "https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0" -O /tmp/WLEDtemp/wled.zip
@@ -39,15 +39,15 @@ jobs:
 
       - name: Build (PlatformIO)
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
           cd "$WLED_DIR"
 
-          # Zbuduj frontend (ważne, inaczej GUI może nie widzieć usermodów)
+          # Zbuduj frontend (bez tego GUI potrafi nie widzieć usermodów)
           npm ci
           npm run build
 
-          # Dołącz AudioReactive + ustaw piny; BEZ status LED
+          # Dołącz AudioReactive i ustaw piny (bez diod statusu)
           {
             echo ''
             echo '[env:custom_build]'
@@ -55,15 +55,23 @@ jobs:
             echo 'custom_usermods = audioreactive'
             echo 'build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0'
             echo 'build_unflags = -D WLED_RELEASE_NAME'
-            # opcjonalnie dla 4MB:
+            # Jeśli masz 4MB i chcesz wymusić partycje 4MB:
             # echo 'board_build.partitions = default_4MB.csv'
           } >> platformio.ini
 
-          pio run -e custom_build
+          echo "==== platformio.ini (tail) ===="
+          tail -n 30 platformio.ini
+
+          # DIAG: sprawdź, że usermod istnieje
+          echo "==== usermods/audioreactive listing ===="
+          ls -al usermods/audioreactive
+
+          # Kompilacja z verbose (żeby w logu było widać 'Compiling ... audioreactive')
+          pio run -e custom_build -v
 
       - name: Copy Files into repo
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
           git rm -r *.bin || true
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
@@ -79,7 +87,7 @@ jobs:
 
       - name: Commit Files
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
