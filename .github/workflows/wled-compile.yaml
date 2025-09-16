@@ -51,6 +51,9 @@ jobs:
             echo ''
             echo '[env:custom_build]'
             echo 'extends = env:esp32c3dev'
+            # Wymuszenie trybu flash DIO i partycji 4MB (dla C3 to zwykle właściwe)
+            echo 'board_build.flash_mode = dio'
+            echo 'board_build.partitions = default_4MB.csv'
           } >> platformio.ini
 
           echo "==== platformio.ini (tail) ===="
@@ -127,5 +130,5 @@ jobs:
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
           git add -A
-          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions+scripts" || echo "No changes"
+          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions+scripts (DIO + 4MB)" || echo "No changes"
           git push origin HEAD:main
