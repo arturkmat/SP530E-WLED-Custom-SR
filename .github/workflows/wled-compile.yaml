@@ -1,54 +1,72 @@
-name: WLED compile
+name: WLED compile (ESP32-C3 + AudioReactive)
 
 on:
-    workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.9
 
-    - name: Install PlatformIO
-      run: |
-        python -m pip install --upgrade pip
-        pip install --upgrade platformio
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-    - name: Run PlatformIO
-      run: |
-        rm -rf /tmp/WLEDtemp/* || true
-        mkdir -p /tmp/WLEDtemp
-        wget https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0 -O /tmp/WLEDtemp/mm.zip
-        unzip /tmp/WLEDtemp/mm.zip -d /tmp/WLEDtemp
-        find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -name "*" -type d >> /tmp/WLEDtemp/wledfoldername
-        cd `cat /tmp/WLEDtemp/wledfoldername`
-        npm install
-        echo '[env:custom_build]' >>platformio.ini
-        echo 'extends = env:esp32c3dev' >>platformio.ini
-        echo 'custom_usermods = audioreactive' >>platformio.ini
-        echo 'build_flags = ${env:esp32c3dev.build_flags} -D BTNPIN=8 -D ARDUINO_USB_CDC_ON_BOOT=0' >>platformio.ini
-        
-        echo 'build_unflags= -D WLED_RELEASE_NAME' >>platformio.ini
-        pio run -e custom_build || pio run -e custom_build
-    - name: Copy Files
-      run: |
-        cd $GITHUB_WORKSPACE
-        git rm -r $GITHUB_WORKSPACE/*.bin || true
-        WLEDFOLDERNAME=`cat /tmp/WLEDtemp/wledfoldername`
-        cp ${WLEDFOLDERNAME}/build_output/firmware/custom_build.bin $GITHUB_WORKSPACE/
-        date -I | tr -d '\n' >$GITHUB_WORKSPACE/last_update_date.txt
-    - name: Commit Files
-      run: |
-        cd $GITHUB_WORKSPACE
-        git config user.name "GitHub Actions Bot"
-        git config user.email "<>"
-        git add $GITHUB_WORKSPACE/custom_build.bin
-        git add $GITHUB_WORKSPACE/last_update_date.txt
-        git commit -m "Commit Custom Build"
-        git push origin main
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch WLED v0.15.0
+        run: |
+          rm -rf /tmp/WLEDtemp || true
+          mkdir -p /tmp/WLEDtemp
+          wget https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0 -O /tmp/WLEDtemp/wled.zip
+          unzip /tmp/WLEDtemp/wled.zip -d /tmp/WLEDtemp
+          # Zapisz jedną (1) linię ze ścieżką
+          find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -type d > /tmp/WLEDtemp/wledfoldername
+
+      - name: Build (PlatformIO)
+        run: |
+          cd "$(cat /tmp/WLEDtemp/wledfoldername)"
+
+          # Zbuduj frontend (ważne, inaczej GUI bywa puste)
+          npm ci
+          npm run build
+
+          # Dodaj własne środowisko: AudioReactive + piny
+          {
+            echo ''
+            echo '[env:custom_build]'
+            echo 'extends = env:esp32c3dev'
+            echo 'custom_usermods = audioreactive'
+            echo 'build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0'
+            echo 'build_unflags = -D WLED_RELEASE_NAME'
+          } >> platformio.ini
+
+          pio run -e custom_build
+
+      - name: Copy Files
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git rm -r *.bin || true
+          WLEDFOLDERNAME="$(cat /tmp/WLEDtemp/wledfoldername)"
+          cp "${WLEDFOLDERNAME}/build_output/firmware/custom_build.bin" "$GITHUB_WORKSPACE/"
+          date -I | tr -d '\n' > "$GITHUB_WORKSPACE/last_update_date.txt"
+
+      - name: Commit Files
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
+          git add custom_build.bin last_update_date.txt
+          git commit -m "Commit Custom Build" || echo "No changes to commit"
+          git push origin HEAD:main
