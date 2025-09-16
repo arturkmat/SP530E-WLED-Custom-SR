@@ -2,18 +2,10 @@ name: WLED compile (ESP32-C3 + AudioReactive)
 
 on:
   workflow_dispatch:
-    inputs:
-      wled_tag:
-        description: 'WLED release tag (np. v0.15.0)'
-        required: false
-        default: 'v0.15.0'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      WLED_TAG: ${{ inputs.wled_tag || 'v0.15.0' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -34,12 +26,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Fetch WLED ${{ env.WLED_TAG }}
+      - name: Fetch WLED v0.15.0
         run: |
           set -euo pipefail
           rm -rf /tmp/WLEDtemp || true
           mkdir -p /tmp/WLEDtemp
-          wget "https://api.github.com/repos/Aircoookie/WLED/zipball/${WLED_TAG}" -O /tmp/WLEDtemp/wled.zip
+          wget "https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0" -O /tmp/WLEDtemp/wled.zip
           unzip /tmp/WLEDtemp/wled.zip -d /tmp/WLEDtemp
           # zapisz dokładnie 1 ścieżkę do rozpakowanego folderu
           find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -type d | head -n1 > /tmp/WLEDtemp/wledfoldername
@@ -55,19 +47,18 @@ jobs:
           npm ci
           npm run build
 
-          # Dodaj środowisko z AudioReactive i Twoimi pinami
-          cat >> platformio.ini << 'EOF'
+          # Dołącz AudioReactive + ustaw piny; BEZ status LED
+          {
+            echo ''
+            echo '[env:custom_build]'
+            echo 'extends = env:esp32c3dev'
+            echo 'custom_usermods = audioreactive'
+            echo 'build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0'
+            echo 'build_unflags = -D WLED_RELEASE_NAME'
+            # opcjonalnie dla 4MB:
+            # echo 'board_build.partitions = default_4MB.csv'
+          } >> platformio.ini
 
-[env:custom_build]
-extends = env:esp32c3dev
-custom_usermods = audioreactive
-build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0
-build_unflags = -D WLED_RELEASE_NAME
-# (opcjonalnie, dla 4MB) odkomentuj:
-# board_build.partitions = default_4MB.csv
-EOF
-
-          # Kompilacja
           pio run -e custom_build
 
       - name: Copy Files into repo
@@ -93,5 +84,5 @@ EOF
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
           git add custom_build.bin last_update_date.txt
-          git commit -m "Commit Custom Build (${WLED_TAG})" || echo "No changes to commit"
+          git commit -m "Commit Custom Build (v0.15.0)" || echo "No changes to commit"
           git push origin HEAD:main
