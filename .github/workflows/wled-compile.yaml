@@ -33,7 +33,6 @@ jobs:
           mkdir -p /tmp/WLEDtemp
           wget "https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0" -O /tmp/WLEDtemp/wled.zip
           unzip /tmp/WLEDtemp/wled.zip -d /tmp/WLEDtemp
-          # zapisz dokładnie 1 ścieżkę do rozpakowanego folderu
           find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -type d | head -n1 > /tmp/WLEDtemp/wledfoldername
           echo "WLED dir: $(cat /tmp/WLEDtemp/wledfoldername)"
 
@@ -43,11 +42,11 @@ jobs:
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
           cd "$WLED_DIR"
 
-          # Zbuduj frontend (bez tego GUI potrafi nie widzieć usermodów)
+          # Build UI
           npm ci
           npm run build
 
-          # Dołącz AudioReactive i ustaw piny (bez diod statusu)
+          # Add custom env with AudioReactive + pins
           {
             echo ''
             echo '[env:custom_build]'
@@ -55,18 +54,12 @@ jobs:
             echo 'custom_usermods = audioreactive'
             echo 'build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0'
             echo 'build_unflags = -D WLED_RELEASE_NAME'
-            # Jeśli masz 4MB i chcesz wymusić partycje 4MB:
-            # echo 'board_build.partitions = default_4MB.csv'
           } >> platformio.ini
 
-          echo "==== platformio.ini (tail) ===="
-          tail -n 30 platformio.ini
+          echo "==== platformio.ini tail ===="
+          tail -n 20 platformio.ini
 
-          # DIAG: sprawdź, że usermod istnieje
-          echo "==== usermods/audioreactive listing ===="
-          ls -al usermods/audioreactive
-
-          # Kompilacja z verbose (żeby w logu było widać 'Compiling ... audioreactive')
+          # Compile verbose (should show 'audioreactive' sources)
           pio run -e custom_build -v
 
       - name: Copy Files into repo
@@ -75,14 +68,21 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git rm -r *.bin || true
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
+          # firmware app
           cp "${WLED_DIR}/build_output/firmware/custom_build.bin" "$GITHUB_WORKSPACE/"
+          # bootloader + partitions from same build
+          cp "${WLED_DIR}/.pio/build/custom_build/bootloader.bin" "$GITHUB_WORKSPACE/"
+          cp "${WLED_DIR}/.pio/build/custom_build/partitions.bin" "$GITHUB_WORKSPACE/"
           date -I | tr -d '\n' > "$GITHUB_WORKSPACE/last_update_date.txt"
 
-      - name: Upload artifact (custom_build.bin)
+      - name: Upload artifacts (firmware set)
         uses: actions/upload-artifact@v4
         with:
-          name: custom_build
-          path: custom_build.bin
+          name: wled_esp32c3_build
+          path: |
+            custom_build.bin
+            bootloader.bin
+            partitions.bin
           if-no-files-found: error
 
       - name: Commit Files
@@ -91,6 +91,6 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
-          git add custom_build.bin last_update_date.txt
+          git add custom_build.bin bootloader.bin partitions.bin last_update_date.txt
           git commit -m "Commit Custom Build (v0.15.0)" || echo "No changes to commit"
           git push origin HEAD:main
