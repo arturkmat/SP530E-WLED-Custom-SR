@@ -53,7 +53,7 @@ jobs:
             echo 'extends = env:esp32c3dev'
             # Wymuszenie trybu flash DIO i partycji 4MB (dla C3 to zwykle właściwe)
             echo 'board_build.flash_mode = dio'
-            echo 'board_build.partitions = default_4MB.csv'
+            echo 'board_build.partitions = tools/WLED/partitions/esp32_partition_app4M.csv'
           } >> platformio.ini
 
           echo "==== platformio.ini (tail) ===="
