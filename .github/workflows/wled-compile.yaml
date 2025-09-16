@@ -100,10 +100,10 @@ jobs:
           echo.
 
           rem Wymagane: Python + esptool w PATH (pip install esptool)
-          esptool --chip esp32c3 -b %BAUD% --before default_reset --after hard_reset ^
+          esptool -encrypt 0x0 --chip esp32c3 -b %BAUD% --before default_reset --after hard_reset ^
            write_flash --erase-all ^
            0x00000 bootloader.bin ^
-           0x08000 partitions.bin ^
+           0x8000 partitions.bin ^
            0x10000 custom_build.bin
 
           if errorlevel 1 (
