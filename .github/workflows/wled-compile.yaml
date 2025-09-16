@@ -1,4 +1,4 @@
-name: WLED compile (ESP32-C3 + AudioReactive)
+name: WLED-MM compile (ESP32-C3, v14.5.0-beta)
 
 on:
   workflow_dispatch:
@@ -26,15 +26,15 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Fetch WLED v0.15.0
+      - name: Fetch MoonModules/WLED-MM v14.5.0-beta
         run: |
           set -euxo pipefail
           rm -rf /tmp/WLEDtemp || true
           mkdir -p /tmp/WLEDtemp
-          wget "https://api.github.com/repos/Aircoookie/WLED/zipball/v0.15.0" -O /tmp/WLEDtemp/wled.zip
-          unzip /tmp/WLEDtemp/wled.zip -d /tmp/WLEDtemp
+          wget "https://api.github.com/repos/MoonModules/WLED/zipball/v14.5.0-beta" -O /tmp/WLEDtemp/wledmm.zip
+          unzip /tmp/WLEDtemp/wledmm.zip -d /tmp/WLEDtemp
           find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -type d | head -n1 > /tmp/WLEDtemp/wledfoldername
-          echo "WLED dir: $(cat /tmp/WLEDtemp/wledfoldername)"
+          echo "WLED-MM dir: $(cat /tmp/WLEDtemp/wledfoldername)"
 
       - name: Build (PlatformIO)
         run: |
@@ -42,55 +42,52 @@ jobs:
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
           cd "$WLED_DIR"
 
-          # Build UI
+          # Zbuduj Web UI
           npm ci
           npm run build
 
-          # Add custom env with AudioReactive + pins
+          # Dodaj środowisko tylko z esp32c3dev
           {
             echo ''
             echo '[env:custom_build]'
             echo 'extends = env:esp32c3dev'
-            echo 'custom_usermods = audioreactive'
-            echo 'build_flags = ${env:esp32c3dev.build_flags} -D UM_AUDIOREACTIVE_ENABLE -D SR_DMTYPE=1 -D BTNPIN=8 -D LEDPIN=19 -D I2S_SDPIN=3 -D I2S_WSPIN=4 -D I2S_CKPIN=5 -D ARDUINO_USB_CDC_ON_BOOT=0'
-            echo 'build_unflags = -D WLED_RELEASE_NAME'
           } >> platformio.ini
 
-          echo "==== platformio.ini tail ===="
+          echo "==== platformio.ini (tail) ===="
           tail -n 20 platformio.ini
 
-          # Compile verbose (should show 'audioreactive' sources)
+          # Kompilacja
           pio run -e custom_build -v
 
-      - name: Copy Files into repo
+      - name: Copy firmware set into repo
         run: |
           set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
           git rm -r *.bin || true
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
-          # firmware app
+          # app:
           cp "${WLED_DIR}/build_output/firmware/custom_build.bin" "$GITHUB_WORKSPACE/"
-          # bootloader + partitions from same build
+          # bootloader + partitions z tego samego builda:
           cp "${WLED_DIR}/.pio/build/custom_build/bootloader.bin" "$GITHUB_WORKSPACE/"
           cp "${WLED_DIR}/.pio/build/custom_build/partitions.bin" "$GITHUB_WORKSPACE/"
-          date -I | tr -d '\n' > "$GITHUB_WORKSPACE/last_update_date.txt"
+          date -I > "$GITHUB_WORKSPACE/last_update_date.txt"
 
       - name: Upload artifacts (firmware set)
         uses: actions/upload-artifact@v4
         with:
-          name: wled_esp32c3_build
+          name: wled_mm_esp32c3_v14.5.0-beta
           path: |
             custom_build.bin
             bootloader.bin
             partitions.bin
           if-no-files-found: error
 
-      - name: Commit Files
+      - name: Commit files
         run: |
           set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
           git add custom_build.bin bootloader.bin partitions.bin last_update_date.txt
-          git commit -m "Commit Custom Build (v0.15.0)" || echo "No changes to commit"
+          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions" || echo "No changes"
           git push origin HEAD:main
