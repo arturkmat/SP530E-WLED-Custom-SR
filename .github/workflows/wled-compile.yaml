@@ -42,11 +42,11 @@ jobs:
           WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
           cd "$WLED_DIR"
 
-          # Zbuduj Web UI
+          # Build Web UI
           npm ci
           npm run build
 
-          # Dodaj środowisko tylko z esp32c3dev
+          # Custom environment for ESP32-C3
           {
             echo ''
             echo '[env:custom_build]'
@@ -56,23 +56,58 @@ jobs:
           echo "==== platformio.ini (tail) ===="
           tail -n 20 platformio.ini
 
-          # Kompilacja
+          # Build firmware
           pio run -e custom_build -v
 
-      - name: Copy firmware set into repo
+      - name: Copy firmware set + scripts into repo
         run: |
           set -euxo pipefail
           cd "$GITHUB_WORKSPACE"
-          git rm -r *.bin || true
-          WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
-          # app:
-          cp "${WLED_DIR}/build_output/firmware/custom_build.bin" "$GITHUB_WORKSPACE/"
-          # bootloader + partitions z tego samego builda:
-          cp "${WLED_DIR}/.pio/build/custom_build/bootloader.bin" "$GITHUB_WORKSPACE/"
-          cp "${WLED_DIR}/.pio/build/custom_build/partitions.bin" "$GITHUB_WORKSPACE/"
-          date -I > "$GITHUB_WORKSPACE/last_update_date.txt"
 
-      - name: Upload artifacts (firmware set)
+          # ensure previous files removed to force fresh commit
+          git rm -f bootloader.bin partitions.bin custom_build.bin flash.sh flash.bat checksums.txt || true
+
+          WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
+
+          # Copy firmware
+          install -m 0644 "${WLED_DIR}/build_output/firmware/custom_build.bin" .
+          install -m 0644 "${WLED_DIR}/.pio/build/custom_build/bootloader.bin" .
+          install -m 0644 "${WLED_DIR}/.pio/build/custom_build/partitions.bin" .
+
+          # flash.sh (Linux/macOS)
+          cat > flash.sh <<'BASH'
+          #!/bin/bash
+          set -e
+          PORT=${1:-/dev/ttyUSB0}
+          BAUD=${2:-460800}
+
+          esptool.py --chip esp32c3 --port "$PORT" --baud "$BAUD" write_flash --encrypt \
+            0x0     bootloader.bin \
+            0x8000  partitions.bin \
+            0x10000 custom_build.bin
+          BASH
+          chmod +x flash.sh
+
+          # flash.bat (Windows)
+          cat > flash.bat <<'BAT'
+          @echo off
+          set PORT=%1
+          if "%PORT%"=="" set PORT=COM3
+          set BAUD=%2
+          if "%BAUD%"=="" set BAUD=460800
+
+          esptool.py --chip esp32c3 --port %PORT% --baud %BAUD% write_flash --encrypt ^
+            0x0     bootloader.bin ^
+            0x8000  partitions.bin ^
+            0x10000 custom_build.bin
+          BAT
+
+          # checksums
+          sha256sum bootloader.bin partitions.bin custom_build.bin > checksums.txt
+
+          date -I > last_update_date.txt
+
+      - name: Upload artifacts (firmware + scripts)
         uses: actions/upload-artifact@v4
         with:
           name: wled_mm_esp32c3_v14.5.0-beta
@@ -80,14 +115,17 @@ jobs:
             custom_build.bin
             bootloader.bin
             partitions.bin
+            flash.sh
+            flash.bat
+            checksums.txt
+            last_update_date.txt
           if-no-files-found: error
 
       - name: Commit files
         run: |
           set -euxo pipefail
-          cd "$GITHUB_WORKSPACE"
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
-          git add custom_build.bin bootloader.bin partitions.bin last_update_date.txt
-          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions" || echo "No changes"
+          git add -A
+          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions+scripts" || echo "No changes"
           git push origin HEAD:main
