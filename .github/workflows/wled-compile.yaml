@@ -1,4 +1,4 @@
-name: WLED-MM compile (ESP32-C3, v14.5.0-beta)
+name: WLED compile
 
 on:
   workflow_dispatch:
@@ -15,120 +15,112 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Install PlatformIO
+      - name: Install PlatformIO & tools
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade platformio
-          pio --version
+          sudo apt-get update
+          sudo apt-get install -y jq unzip
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
-        with:
-          node-version: "20"
 
-      - name: Fetch MoonModules/WLED-MM v14.5.0-beta
+      - name: Download latest WLED source
+        env:
+          API_URL: https://api.github.com/repos/Aircoookie/WLED/releases/latest
         run: |
-          set -euxo pipefail
           rm -rf /tmp/WLEDtemp || true
           mkdir -p /tmp/WLEDtemp
-          wget "https://api.github.com/repos/MoonModules/WLED/zipball/v14.5.0-beta" -O /tmp/WLEDtemp/wledmm.zip
-          unzip /tmp/WLEDtemp/wledmm.zip -d /tmp/WLEDtemp
+          LATEST_TAG=$(curl -s "$API_URL" | jq -r .tag_name)
+          echo "Latest tag: $LATEST_TAG"
+          echo "$LATEST_TAG" >/tmp/WLEDtemp/wled_version
+          wget "https://api.github.com/repos/Aircoookie/WLED/zipball/${LATEST_TAG}" -O /tmp/WLEDtemp/wled.zip
+          unzip -q /tmp/WLEDtemp/wled.zip -d /tmp/WLEDtemp
           find /tmp/WLEDtemp -maxdepth 1 -mindepth 1 -type d | head -n1 > /tmp/WLEDtemp/wledfoldername
-          echo "WLED-MM dir: $(cat /tmp/WLEDtemp/wledfoldername)"
 
-      - name: Build (PlatformIO)
+      - name: Patch platformio.ini and build (custom_build)
         run: |
-          set -euxo pipefail
-          WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
-          cd "$WLED_DIR"
-
-          # Build Web UI
-          npm ci
-          npm run build
-
-          # Custom environment for ESP32-C3
+          WLEDFOLDERNAME=$(cat /tmp/WLEDtemp/wledfoldername)
+          cd "$WLEDFOLDERNAME"
+          npm install
           {
             echo ''
             echo '[env:custom_build]'
             echo 'extends = env:esp32c3dev'
-            # Wymuszenie trybu flash DIO i partycji 4MB (dla C3 to zwykle właściwe)
-            echo 'board_build.flash_mode = dio'
-            echo 'board_build.partitions = tools/WLED/partitions/esp32_partition_app4M.csv'
+            echo 'build_flags = ${env:esp32c3dev.build_flags} -D BTNPIN=8 -D ARDUINO_USB_CDC_ON_BOOT=0'
+            echo 'build_unflags = -D WLED_RELEASE_NAME'
+            # wymuszenie poprawnej ścieżki do partycji, żeby uniknąć błędu "default_4MB.csv not found"
+            echo 'board_build.partitions = tools/default_4MB.csv'
           } >> platformio.ini
+          # kompilacja
+          pio run -e custom_build || pio run -e custom_build
 
-          echo "==== platformio.ini (tail) ===="
-          tail -n 20 platformio.ini
-
-          # Build firmware
-          pio run -e custom_build -v
-
-      - name: Copy firmware set + scripts into repo
+      - name: Collect artifacts (firmware, bootloader, partitions)
         run: |
-          set -euxo pipefail
-          cd "$GITHUB_WORKSPACE"
-
-          # ensure previous files removed to force fresh commit
-          git rm -f bootloader.bin partitions.bin custom_build.bin flash.sh flash.bat checksums.txt || true
-
-          WLED_DIR="$(cat /tmp/WLEDtemp/wledfoldername)"
-
-          # Copy firmware
-          install -m 0644 "${WLED_DIR}/build_output/firmware/custom_build.bin" .
-          install -m 0644 "${WLED_DIR}/.pio/build/custom_build/bootloader.bin" .
-          install -m 0644 "${WLED_DIR}/.pio/build/custom_build/partitions.bin" .
-
-          # flash.sh (Linux/macOS)
-          cat > flash.sh <<'BASH'
-          #!/bin/bash
           set -e
-          PORT=${1:-/dev/ttyUSB0}
-          BAUD=${2:-460800}
+          WLEDFOLDERNAME=$(cat /tmp/WLEDtemp/wledfoldername)
+          VERSION=$(cat /tmp/WLEDtemp/wled_version)
 
-          esptool.py --chip esp32c3 --port "$PORT" --baud "$BAUD" write_flash --encrypt \
-            0x0     bootloader.bin \
-            0x8000  partitions.bin \
-            0x10000 custom_build.bin
-          BASH
-          chmod +x flash.sh
+          # Ścieżki potencjalnych artefaktów
+          FIRM1="$WLEDFOLDERNAME/build_output/firmware/custom_build.bin"
+          FIRM2="$WLEDFOLDERNAME/.pio/build/custom_build/firmware.bin"
+          BOOT1="$WLEDFOLDERNAME/.pio/build/custom_build/bootloader.bin"
+          PART1="$WLEDFOLDERNAME/.pio/build/custom_build/partitions.bin"
+          # Niektóre środowiska generują alternatywne nazwy:
+          BOOT2="$WLEDFOLDERNAME/.pio/build/custom_build/bootloader_dio_40m.bin"
 
-          # flash.bat (Windows)
-          cat > flash.bat <<'BAT'
-          @echo off
-          set PORT=%1
-          if "%PORT%"=="" set PORT=COM3
-          set BAUD=%2
-          if "%BAUD%"=="" set BAUD=460800
+          cd "$GITHUB_WORKSPACE"
+          git rm -r --ignore-unmatch *.bin
+          # firmware
+          if [ -f "$FIRM1" ]; then cp "$FIRM1" custom_build.bin; elif [ -f "$FIRM2" ]; then cp "$FIRM2" custom_build.bin; else echo "Firmware not found!" && exit 1; fi
+          # bootloader
+          if   [ -f "$BOOT1" ]; then cp "$BOOT1" bootloader.bin
+          elif [ -f "$BOOT2" ]; then cp "$BOOT2" bootloader.bin
+          else echo "Bootloader not found!" && exit 1; fi
+          # partitions
+          if [ -f "$PART1" ]; then cp "$PART1" partitions.bin; else echo "Partitions not found!" && exit 1; fi
 
-          esptool.py --chip esp32c3 --port %PORT% --baud %BAUD% write_flash --encrypt ^
-            0x0     bootloader.bin ^
-            0x8000  partitions.bin ^
-            0x10000 custom_build.bin
-          BAT
+          # metadata
+          date -Iseconds | tr -d '\n' > last_update_date.txt
+          echo -n "$VERSION" > wled_version.txt
 
-          # checksums
-          sha256sum bootloader.bin partitions.bin custom_build.bin > checksums.txt
-
-          date -I > last_update_date.txt
-
-      - name: Upload artifacts (firmware + scripts)
-        uses: actions/upload-artifact@v4
-        with:
-          name: wled_mm_esp32c3_v14.5.0-beta
-          path: |
-            custom_build.bin
-            bootloader.bin
-            partitions.bin
-            flash.sh
-            flash.bat
-            checksums.txt
-            last_update_date.txt
-          if-no-files-found: error
-
-      - name: Commit files
+      - name: Create Windows flash script (.bat)
         run: |
-          set -euxo pipefail
+          cat > flash_custom_build.bat << "EOF"
+          @echo off
+          setlocal
+          rem Użycie: flash_custom_build.bat [PORT] [BAUD]
+          rem Przykład: flash_custom_build.bat COM3 460800
+          set "BAUD=%~2"
+          if "%BAUD%"=="" set "BAUD=460800"
+
+          echo Baud: %BAUD%
+          echo.
+          echo Wgrywanie WLED (ESP32-C3): bootloader + partitions + firmware
+          echo.
+
+          rem Wymagane: Python + esptool w PATH (pip install esptool)
+          esptool --chip esp32c3 -b %BAUD% --before default_reset --after hard_reset ^
+           write_flash --erase-all ^
+           0x00000 bootloader.bin ^
+           0x08000 partitions.bin ^
+           0x10000 custom_build.bin
+
+          if errorlevel 1 (
+            echo.
+            echo [ERROR] Wgrywanie nie powiodlo sie.
+            exit /b 1
+          ) else (
+            echo.
+            echo [OK] Zakonczono pomyslnie.
+            exit /b 0
+          )
+          EOF
+
+      - name: Commit Files
+        run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "<>"
-          git add -A
-          git commit -m "WLED-MM v14.5.0-beta (ESP32-C3) – app+bootloader+partitions+scripts (DIO + 4MB)" || echo "No changes"
-          git push origin HEAD:main
+          git add custom_build.bin bootloader.bin partitions.bin flash_custom_build.bat last_update_date.txt wled_version.txt
+          git commit -m "WLED: build from latest tag with bootloader & partitions + flash .bat"
+          git push origin main
