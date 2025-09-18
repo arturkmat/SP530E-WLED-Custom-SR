@@ -84,26 +84,18 @@ jobs:
 
           # Skrypt flashujący dla Windows (ESP32-C3)
           cat > "$REPO_ROOT/flash_wled_c3.bat" << 'BAT'
-@echo off
-setlocal ENABLEDELAYEDEXPANSION
-python -m esptool -encrypt 0x0 --chip esp32c3 --baud 921600 --before default_reset --after hard_reset ^
-  write_flash -z ^
-  0x0000 bootloader.bin ^
-  0x8000 partitions.bin ^
-  0x10000 custom_build.bin
-
-if %ERRORLEVEL% NEQ 0 (
-  echo.
-  echo [!] Blad flashowania (sprawdz sterowniki/PORT/tryb boot).
-  pause
-  exit /b 1
-)
-
-echo.
-echo [OK] Wgrano firmware. Urzadzenie resetuje sie.
-pause
-BAT
-
+          @echo off
+          set BAUD=%2
+          if "%BAUD%"=="" set BAUD=460800
+          
+          esptool.py --chip esp32c3 --baud %BAUD% write_flash --encrypt ^
+            0x0     bootloader.bin ^
+            0x8000  partitions.bin ^
+            0x10000 custom_build.bin
+          echo.
+          echo [OK] Wgrano firmware. Urzadzenie resetuje sie.
+          pause
+          BAT
       - name: Commit artifacts
         run: |
           cd "$GITHUB_WORKSPACE"
